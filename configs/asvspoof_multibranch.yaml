@@ -1,0 +1,76 @@
+# Đường dẫn tới thư mục chứa dữ liệu ASVspoof2019 LA.
+# Cấu trúc mong đợi:
+#   <data_root>/
+#     ASVspoof2019_LA_train/
+#       flac/<utt_id>.flac
+#       protocol/ASVspoof2019.LA.cm.train.trn.txt
+#     ASVspoof2019_LA_dev/
+#       flac/...
+#       protocol/ASVspoof2019.LA.cm.dev.trl.txt
+#     ASVspoof2019_LA_eval/
+#       flac/...
+#       protocol/ASVspoof2019.LA.cm.eval.trl.txt  (tuỳ chọn)
+
+data:
+  data_root: "D:/Datasets/ASVspoof2019_LA"
+  sample_rate: 16000
+  max_duration: 6.0
+  pad_mode: "repeat"
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
+  preload_waveforms: false
+
+  feature:
+    spectral:
+      n_mels: 128
+      n_fft: 1024
+      hop_length: 256
+    temporal:
+      emphasis: true
+      highpass_cutoff: 20.0
+    cepstral:
+      n_bins: 96
+      bins_per_octave: 12
+
+  train:
+    partition: "train"
+    batch_size: 16
+    shuffle: true
+    drop_last: true
+
+  valid:
+    partition: "dev"
+    batch_size: 16
+    shuffle: false
+    drop_last: false
+
+  # Bỏ qua hoặc cập nhật nếu có ground-truth cho eval
+  test: null
+
+model:
+  embed_dim: 256
+  attn_dim: 128
+  classifier_hidden: 128
+  dropout: 0.3
+
+training:
+  epochs: 50
+  device: null  # auto chọn cuda nếu khả dụng
+  log_interval: 20
+  grad_clip: 5.0
+  mixed_precision: true
+  checkpoint_dir: "checkpoints"
+  best_metric: "eer"
+  patience: 8
+  save_every: 0
+  evaluate_on_test: false
+
+optimizer:
+  lr: 0.0002
+  weight_decay: 0.00001
+  betas: [0.9, 0.98]
+
+scheduler:
+  use_cosine: true
+  min_lr: 0.000001
