@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import math
 import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -15,6 +14,51 @@ from ..utils.audio import load_audio, pad_or_trim
 
 
 LA_LABELS = {"bonafide": 0, "spoof": 1}
+
+
+@dataclass(frozen=True)
+class DatasetSpec:
+    partition_dir_template: str
+    protocol_patterns: Tuple[str, ...]
+    audio_subdirs: Tuple[str, ...] = ("flac", "wav")
+    audio_extensions: Tuple[str, ...] = (".flac", ".wav")
+
+
+DEFAULT_DATASET_VARIANT = "ASVspoof2019_LA"
+
+
+DATASET_SPECS: Dict[str, DatasetSpec] = {
+    "ASVspoof2019_LA": DatasetSpec(
+        partition_dir_template="ASVspoof2019_LA_{partition}",
+        protocol_patterns=(
+            "ASVspoof2019.LA.cm.{partition}.trn.txt",
+            "ASVspoof2019.LA.cm.{partition}.trl.txt",
+            "ASVspoof2019.LA.cm.{partition}.txt",
+        ),
+        audio_subdirs=("flac", "wav"),
+        audio_extensions=(".flac", ".wav"),
+    ),
+    "ASVspoof2019_PA": DatasetSpec(
+        partition_dir_template="ASVspoof2019_PA_{partition}",
+        protocol_patterns=(
+            "ASVspoof2019.PA.cm.{partition}.trn.txt",
+            "ASVspoof2019.PA.cm.{partition}.trl.txt",
+            "ASVspoof2019.PA.cm.{partition}.txt",
+        ),
+        audio_subdirs=("wav", "flac"),
+        audio_extensions=(".wav", ".flac"),
+    ),
+    "ASVspoof5": DatasetSpec(
+        partition_dir_template="ASVspoof5_{partition}",
+        protocol_patterns=(
+            "ASVspoof5.cm.{partition}.txt",
+            "ASVspoof5.{partition}.cm.txt",
+            "ASVspoof5.{partition}.txt",
+        ),
+        audio_subdirs=("wav", "flac"),
+        audio_extensions=(".wav", ".flac"),
+    ),
+}
 
 
 @dataclass
@@ -55,6 +99,7 @@ class ASVspoofLADataset(Dataset):
         max_duration: float = 6.0,
         pad_mode: str = "repeat",
         preload_waveforms: bool = False,
+        dataset_variant: str = DEFAULT_DATASET_VARIANT,
     ) -> None:
         super().__init__()
         self.data_root = data_root
@@ -64,25 +109,17 @@ class ASVspoofLADataset(Dataset):
         self.pad_mode = pad_mode
         self.feature_extractor = feature_extractor
         self.preload_waveforms = preload_waveforms
+        if dataset_variant not in DATASET_SPECS:
+            raise ValueError(
+                "Unsupported dataset_variant '{}'. Available: {}".format(
+                    dataset_variant, ", ".join(DATASET_SPECS.keys())
+                )
+            )
+        self.dataset_variant = dataset_variant
+        self.dataset_spec = DATASET_SPECS[dataset_variant]
 
         if protocol_file is None:
-            proto_dir = os.path.join(
-                data_root,
-                f"ASVspoof2019_LA_{partition}",
-                "protocol",
-            )
-            pattern = f"ASVspoof2019.LA.cm.{partition}.trn.txt"
-            candidates = [
-                os.path.join(proto_dir, pattern),
-                os.path.join(proto_dir, pattern.replace(".trn", "")),
-            ]
-            exists = [path for path in candidates if os.path.exists(path)]
-            if not exists:
-                raise FileNotFoundError(
-                    f"Không tìm thấy protocol cho partition={partition}. "
-                    f"Hãy cung cấp protocol_file thủ công. Checked: {candidates}"
-                )
-            protocol_file = exists[0]
+            protocol_file = self._infer_protocol_path()
 
         self.protocol_file = protocol_file
         self.examples = self._load_metadata()
@@ -99,6 +136,33 @@ class ASVspoofLADataset(Dataset):
                 self._waveform_cache[example.utt_id] = waveform
         else:
             self._waveform_cache = {}
+
+    def _infer_protocol_path(self) -> str:
+        partition_dir = self.dataset_spec.partition_dir_template.format(
+            partition=self.partition
+        )
+        proto_dir = os.path.join(self.data_root, partition_dir, "protocol")
+        candidates: List[str] = []
+        for pattern in self.dataset_spec.protocol_patterns:
+            pattern_path = pattern.format(partition=self.partition)
+            candidates.append(os.path.join(proto_dir, pattern_path))
+            # Một số bộ dữ liệu bỏ hậu tố .trn/.trl
+            if pattern_path.endswith(".trn.txt"):
+                candidates.append(
+                    os.path.join(proto_dir, pattern_path.replace(".trn", ""))
+                )
+            if pattern_path.endswith(".trl.txt"):
+                candidates.append(
+                    os.path.join(proto_dir, pattern_path.replace(".trl", ""))
+                )
+        existing = [path for path in candidates if os.path.exists(path)]
+        if not existing:
+            raise FileNotFoundError(
+                "Không tìm thấy protocol cho partition={} trong {}. Hãy cung cấp protocol_file thủ công.".format(
+                    self.partition, proto_dir
+                )
+            )
+        return existing[0]
 
     def _load_metadata(self) -> List[ASVExample]:
         examples: List[ASVExample] = []
@@ -122,18 +186,23 @@ class ASVspoofLADataset(Dataset):
                 if label_token not in LA_LABELS:
                     raise ValueError(f"Nhãn không hợp lệ: {label_token}")
 
-                partition_dir = f"ASVspoof2019_LA_{self.partition}"
-                audio_dir = os.path.join(self.data_root, partition_dir, "flac")
-                audio_path = os.path.join(audio_dir, f"{utt_id}.flac")
-                if not os.path.exists(audio_path):
-                    # Một số dataset dùng .wav
-                    wav_path = os.path.join(audio_dir, f"{utt_id}.wav")
-                    if os.path.exists(wav_path):
-                        audio_path = wav_path
-                    else:
-                        raise FileNotFoundError(
-                            f"Không tìm thấy file audio cho {utt_id} tại {audio_dir}"
-                        )
+                partition_dir = self.dataset_spec.partition_dir_template.format(
+                    partition=self.partition
+                )
+                audio_path = None
+                for subdir in self.dataset_spec.audio_subdirs:
+                    audio_dir = os.path.join(self.data_root, partition_dir, subdir)
+                    for ext in self.dataset_spec.audio_extensions:
+                        candidate = os.path.join(audio_dir, f"{utt_id}{ext}")
+                        if os.path.exists(candidate):
+                            audio_path = candidate
+                            break
+                    if audio_path is not None:
+                        break
+                if audio_path is None:
+                    raise FileNotFoundError(
+                        f"Không tìm thấy file audio cho {utt_id} trong {partition_dir}"
+                    )
 
                 examples.append(
                     ASVExample(
