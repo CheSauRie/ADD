@@ -2,126 +2,25 @@ from __future__ import annotations
 
 import argparse
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import torch
-import yaml
 
-from src.data.datamodule import (
-    ASVspoofDataModule,
-    DataModuleConfig,
-    PartitionConfig,
+from src.data.datamodule import ASVspoofDataModule
+from src.models.multi_branch_model import MultiBranchAttentionModel
+from src.training.engine import Trainer
+from src.utils.config import (
+    build_data_module_config,
+    build_model_config,
+    build_optimizer_config,
+    build_scheduler_config,
+    build_training_config,
+    load_yaml_config,
 )
-from src.data.features import FeatureConfig
-from src.models.multi_branch_model import (
-    MultiBranchAttentionModel,
-    MultiBranchModelConfig,
-)
-from src.training.engine import (
-    Trainer,
-    TrainingConfig,
-    OptimizerConfig,
-    SchedulerConfig,
-)
-
-
-def load_yaml_config(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
-
-
-def build_feature_config(cfg: Dict[str, Any]) -> FeatureConfig:
-    base = FeatureConfig()
-    spectral = {**base.spectral, **cfg.get("spectral", {})}
-    temporal = {**base.temporal, **cfg.get("temporal", {})}
-    cepstral = {**base.cepstral, **cfg.get("cepstral", {})}
-    return FeatureConfig(
-        sample_rate=cfg.get("sample_rate", base.sample_rate),
-        spectral=spectral,
-        temporal=temporal,
-        cepstral=cepstral,
-    )
-
-
-def build_partition_config(cfg: Dict[str, Any]) -> PartitionConfig:
-    return PartitionConfig(
-        partition=cfg["partition"],
-        protocol_file=cfg.get("protocol_file"),
-        batch_size=cfg.get("batch_size", 32),
-        shuffle=cfg.get("shuffle", True),
-        drop_last=cfg.get("drop_last", False),
-    )
-
-
-def build_data_module_config(cfg: Dict[str, Any]) -> DataModuleConfig:
-    feature_cfg = build_feature_config(cfg.get("feature", {}))
-
-    train_cfg = build_partition_config(cfg["train"])
-    valid_cfg = build_partition_config(cfg["valid"])
-    test_cfg = (
-        build_partition_config(cfg["test"]) if cfg.get("test") is not None else None
-    )
-
-    return DataModuleConfig(
-        data_root=cfg["data_root"],
-        sample_rate=cfg.get("sample_rate", feature_cfg.sample_rate),
-        max_duration=cfg.get("max_duration", 6.0),
-        pad_mode=cfg.get("pad_mode", "repeat"),
-        num_workers=cfg.get("num_workers", 4),
-        pin_memory=cfg.get("pin_memory", True),
-        prefetch_factor=cfg.get("prefetch_factor", 2),
-        feature=feature_cfg,
-        train=train_cfg,
-        valid=valid_cfg,
-        test=test_cfg,
-        preload_waveforms=cfg.get("preload_waveforms", False),
-    )
-
-
-def build_model_config(cfg: Dict[str, Any]) -> MultiBranchModelConfig:
-    base = MultiBranchModelConfig()
-    return MultiBranchModelConfig(
-        embed_dim=cfg.get("embed_dim", base.embed_dim),
-        attn_dim=cfg.get("attn_dim", base.attn_dim),
-        num_classes=cfg.get("num_classes", base.num_classes),
-        classifier_hidden=cfg.get("classifier_hidden", base.classifier_hidden),
-        dropout=cfg.get("dropout", base.dropout),
-    )
-
-
-def build_training_config(cfg: Dict[str, Any]) -> TrainingConfig:
-    base = TrainingConfig()
-    return TrainingConfig(
-        epochs=cfg.get("epochs", base.epochs),
-        device=cfg.get("device", base.device),
-        log_interval=cfg.get("log_interval", base.log_interval),
-        grad_clip=cfg.get("grad_clip", base.grad_clip),
-        mixed_precision=cfg.get("mixed_precision", base.mixed_precision),
-        checkpoint_dir=cfg.get("checkpoint_dir", base.checkpoint_dir),
-        best_metric=cfg.get("best_metric", base.best_metric),
-        patience=cfg.get("patience", base.patience),
-        resume_from=cfg.get("resume_from", base.resume_from),
-        save_every=cfg.get("save_every", base.save_every),
-        evaluate_on_test=cfg.get("evaluate_on_test", base.evaluate_on_test),
-    )
-
-
-def build_optimizer_config(cfg: Dict[str, Any]) -> OptimizerConfig:
-    base = OptimizerConfig()
-    return OptimizerConfig(
-        lr=cfg.get("lr", base.lr),
-        weight_decay=cfg.get("weight_decay", base.weight_decay),
-        betas=tuple(cfg.get("betas", base.betas)),
-        eps=cfg.get("eps", base.eps),
-    )
-
-
-def build_scheduler_config(cfg: Dict[str, Any], total_epochs: int) -> SchedulerConfig:
-    base = SchedulerConfig()
-    use_cosine = cfg.get("use_cosine", base.use_cosine)
-    min_lr = cfg.get("min_lr", base.min_lr)
-    t_max = cfg.get("t_max", total_epochs if base.t_max is None else base.t_max)
-    return SchedulerConfig(use_cosine=use_cosine, min_lr=min_lr, t_max=t_max)
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,6 +36,49 @@ def parse_args() -> argparse.Namespace:
         help="Ghi đè thiết bị (cpu/cuda).",
     )
     return parser.parse_args()
+
+
+def plot_training_curves(history: Dict[str, List[Dict[str, float]]], output_path: str) -> None:
+    if not history or not history.get("train"):
+        return
+
+    output_dir = os.path.dirname(output_path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    train_history = history["train"]
+    valid_history = history.get("valid", [])
+    if not train_history:
+        return
+
+    metrics = list(train_history[0].keys())
+    num_metrics = len(metrics)
+    fig, axes = plt.subplots(num_metrics, 1, figsize=(8, 4 * num_metrics), sharex=True)
+    if num_metrics == 1:
+        axes = [axes]
+
+    epochs = list(range(1, len(train_history) + 1))
+    for ax, metric in zip(axes, metrics):
+        train_values = [record.get(metric) for record in train_history]
+        val_values = [record.get(metric) for record in valid_history]
+        ax.plot(epochs, train_values, label="Train", marker="o")
+        if valid_history:
+            ax.plot(epochs, val_values, label="Validation", marker="s")
+        ax.set_ylabel(metric.replace("_", " ").title())
+        ax.grid(True, linestyle="--", alpha=0.3)
+        ax.legend()
+
+    axes[-1].set_xlabel("Epoch")
+    fig.suptitle("Training Curves", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+
+
+def export_trained_model(trainer: Trainer, output_path: str) -> None:
+    output_dir = os.path.dirname(output_path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+    model_state = trainer.model.state_dict()
+    torch.save(model_state, output_path)
+    print(f"[Trainer] Đã lưu trọng số mô hình tại {output_path}")
 
 
 def main() -> None:
@@ -159,7 +101,20 @@ def main() -> None:
     model = MultiBranchAttentionModel(model_cfg)
     trainer = Trainer(model, training_cfg, optimizer_cfg, scheduler_cfg)
 
-    trainer.fit(datamodule)
+    history = trainer.fit(datamodule)
+
+    plot_path = os.path.join(training_cfg.checkpoint_dir, "training_curves.png")
+    plot_training_curves(history, plot_path)
+
+    best_checkpoint = os.path.join(training_cfg.checkpoint_dir, "checkpoint_best.pt")
+    if os.path.exists(best_checkpoint):
+        trainer.load_checkpoint(best_checkpoint)
+    else:
+        print(
+            f"[Trainer] Không tìm thấy checkpoint tốt nhất tại {best_checkpoint}. "
+            "Giữ nguyên trọng số cuối cùng."
+        )
+
     print("===== Lịch sử huấn luyện =====")
     for record in trainer.train_config.history:
         epoch = record["epoch"]
@@ -169,6 +124,11 @@ def main() -> None:
             if k != "epoch"
         )
         print(f"Epoch {epoch}: {metrics_str}")
+
+    export_path = training_cfg.model_output_path or os.path.join(
+        training_cfg.checkpoint_dir, "multibranch_model.pt"
+    )
+    export_trained_model(trainer, export_path)
 
     if training_cfg.evaluate_on_test and data_cfg.test is not None:
         metrics = trainer.evaluate(datamodule)

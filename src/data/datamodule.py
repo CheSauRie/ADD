@@ -32,6 +32,7 @@ class DataModuleConfig:
     valid: Optional[PartitionConfig] = None
     test: Optional[PartitionConfig] = None
     preload_waveforms: bool = False
+    dataset_variant: str = "ASVspoof2019_LA"
 
 
 class ASVspoofDataModule:
@@ -62,6 +63,7 @@ class ASVspoofDataModule:
             max_duration=self.config.max_duration,
             pad_mode=self.config.pad_mode,
             preload_waveforms=self.config.preload_waveforms,
+            dataset_variant=self.config.dataset_variant,
         )
 
     def train_dataloader(self) -> DataLoader:

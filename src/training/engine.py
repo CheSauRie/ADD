@@ -40,6 +40,7 @@ class TrainingConfig:
     save_every: int = 0
     history: List[Dict[str, float]] = field(default_factory=list)
     evaluate_on_test: bool = False
+    model_output_path: Optional[str] = None
 
 
 class Trainer:
@@ -226,6 +227,17 @@ class Trainer:
         torch.save(state, path)
         tag = "BEST" if best else "SNAPSHOT"
         print(f"[Trainer] Đã lưu checkpoint ({tag}) tại {path}")
+
+    def load_checkpoint(self, path: str) -> None:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Không tìm thấy checkpoint: {path}")
+        state = torch.load(path, map_location=self.device)
+        model_state = state.get("model_state_dict", state)
+        self.model.load_state_dict(model_state)
+        self.model.to(self.device)
+        self.best_metric_value = state.get("best_metric", self.best_metric_value)
+        self.best_epoch = state.get("best_epoch", self.best_epoch)
+        print(f"[Trainer] Đã tải checkpoint từ {path}")
 
     def _build_scheduler(self, optimizer):
         if not self.scheduler_config.use_cosine:

@@ -20,6 +20,7 @@ data:
   pin_memory: true
   prefetch_factor: 2
   preload_waveforms: false
+  dataset_variant: "ASVspoof2019_LA"  # Có thể chuyển sang "ASVspoof2019_PA" hoặc "ASVspoof5"
 
   feature:
     spectral:
@@ -65,6 +66,7 @@ training:
   patience: 8
   save_every: 0
   evaluate_on_test: false
+  model_output_path: null  # Mặc định lưu tại <checkpoint_dir>/multibranch_model.pt
 
 optimizer:
   lr: 0.0002
