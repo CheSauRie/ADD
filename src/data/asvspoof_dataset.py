@@ -20,8 +20,12 @@ LA_LABELS = {"bonafide": 0, "spoof": 1}
 class DatasetSpec:
     partition_dir_template: str
     protocol_patterns: Tuple[str, ...]
-    audio_subdirs: Tuple[str, ...] = ("flac", "wav")
+    audio_subdirs: Tuple[str, ...] = ("", "flac", "wav")
     audio_extensions: Tuple[str, ...] = (".flac", ".wav")
+    protocol_dir_templates: Tuple[str, ...] = (
+        "{partition_dir}/protocol",
+        "{partition_dir}",
+    )
 
 
 DEFAULT_DATASET_VARIANT = "ASVspoof2019_LA"
@@ -35,8 +39,13 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "ASVspoof2019.LA.cm.{partition}.trl.txt",
             "ASVspoof2019.LA.cm.{partition}.txt",
         ),
-        audio_subdirs=("flac", "wav"),
+        audio_subdirs=("", "flac", "wav"),
         audio_extensions=(".flac", ".wav"),
+        protocol_dir_templates=(
+            "ASVspoof2019_LA_cm_protocols",
+            "{partition_dir}/protocol",
+            "{partition_dir}",
+        ),
     ),
     "ASVspoof2019_PA": DatasetSpec(
         partition_dir_template="ASVspoof2019_PA_{partition}",
@@ -45,8 +54,13 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "ASVspoof2019.PA.cm.{partition}.trl.txt",
             "ASVspoof2019.PA.cm.{partition}.txt",
         ),
-        audio_subdirs=("wav", "flac"),
+        audio_subdirs=("", "wav", "flac"),
         audio_extensions=(".wav", ".flac"),
+        protocol_dir_templates=(
+            "ASVspoof2019_PA_cm_protocols",
+            "{partition_dir}/protocol",
+            "{partition_dir}",
+        ),
     ),
     "ASVspoof5": DatasetSpec(
         partition_dir_template="ASVspoof5_{partition}",
@@ -55,7 +69,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
             "ASVspoof5.{partition}.cm.txt",
             "ASVspoof5.{partition}.txt",
         ),
-        audio_subdirs=("wav", "flac"),
+        audio_subdirs=("", "wav", "flac"),
         audio_extensions=(".wav", ".flac"),
     ),
 }
@@ -141,25 +155,51 @@ class ASVspoofLADataset(Dataset):
         partition_dir = self.dataset_spec.partition_dir_template.format(
             partition=self.partition
         )
-        proto_dir = os.path.join(self.data_root, partition_dir, "protocol")
+
+        protocol_dirs: List[str] = []
+        for template in self.dataset_spec.protocol_dir_templates:
+            protocol_dirs.append(
+                os.path.join(
+                    self.data_root,
+                    template.format(
+                        partition=self.partition, partition_dir=partition_dir
+                    ),
+                )
+            )
+
+        # Backward compatibility: cũng tìm trong thư mục protocol nội bộ nếu có.
+        protocol_dirs.extend(
+            [
+                os.path.join(self.data_root, partition_dir, "protocol"),
+                os.path.join(self.data_root, partition_dir),
+            ]
+        )
+
+        seen = set()
+        protocol_dirs = [
+            path for path in protocol_dirs if not (path in seen or seen.add(path))
+        ]
+
         candidates: List[str] = []
-        for pattern in self.dataset_spec.protocol_patterns:
-            pattern_path = pattern.format(partition=self.partition)
-            candidates.append(os.path.join(proto_dir, pattern_path))
-            # Một số bộ dữ liệu bỏ hậu tố .trn/.trl
-            if pattern_path.endswith(".trn.txt"):
-                candidates.append(
-                    os.path.join(proto_dir, pattern_path.replace(".trn", ""))
-                )
-            if pattern_path.endswith(".trl.txt"):
-                candidates.append(
-                    os.path.join(proto_dir, pattern_path.replace(".trl", ""))
-                )
+        for proto_dir in protocol_dirs:
+            for pattern in self.dataset_spec.protocol_patterns:
+                pattern_path = pattern.format(partition=self.partition)
+                candidates.append(os.path.join(proto_dir, pattern_path))
+                # Một số bộ dữ liệu bỏ hậu tố .trn/.trl
+                if pattern_path.endswith(".trn.txt"):
+                    candidates.append(
+                        os.path.join(proto_dir, pattern_path.replace(".trn", ""))
+                    )
+                if pattern_path.endswith(".trl.txt"):
+                    candidates.append(
+                        os.path.join(proto_dir, pattern_path.replace(".trl", ""))
+                    )
+
         existing = [path for path in candidates if os.path.exists(path)]
         if not existing:
             raise FileNotFoundError(
                 "Không tìm thấy protocol cho partition={} trong {}. Hãy cung cấp protocol_file thủ công.".format(
-                    self.partition, proto_dir
+                    self.partition, ", ".join(protocol_dirs)
                 )
             )
         return existing[0]
@@ -172,17 +212,26 @@ class ASVspoofLADataset(Dataset):
                 tokens = [tok for tok in row if tok]
                 if not tokens:
                     continue
-                if len(tokens) == 4:
-                    speaker_id, utt_id, system_id, label_token = tokens
-                    attack_type = None
-                elif len(tokens) >= 5:
-                    speaker_id, utt_id, system_id, attack_type, label_token = tokens[:5]
-                else:
+                if len(tokens) < 3:
                     raise ValueError(
                         f"Không thể parse dòng protocol: {tokens}"
                     )
 
-                label_token = label_token.lower()
+                speaker_id, utt_id = tokens[:2]
+                label_token = tokens[-1].lower()
+
+                middle_tokens = tokens[2:-1]
+                system_id: Optional[str] = None
+                attack_type: Optional[str] = None
+                if middle_tokens:
+                    system_candidate = middle_tokens[-1]
+                    if system_candidate != "-":
+                        system_id = system_candidate
+                    if len(middle_tokens) >= 2:
+                        attack_candidate = middle_tokens[0]
+                        if attack_candidate != "-":
+                            attack_type = attack_candidate
+
                 if label_token not in LA_LABELS:
                     raise ValueError(f"Nhãn không hợp lệ: {label_token}")
 
