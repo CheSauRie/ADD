@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+import torch
 from torch.utils.data import DataLoader
 
 from .asvspoof_dataset import ASVspoofLADataset, collate_fn
@@ -44,6 +45,7 @@ class ASVspoofDataModule:
         self.config = config
         self.feature_extractor = MultiBranchFeatureExtractor(config.feature)
         self._datasets = {}
+        self._rng = self._build_generator()
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Khởi tạo dataset theo stage."""
@@ -88,7 +90,14 @@ class ASVspoofDataModule:
             num_workers=self.config.num_workers,
             pin_memory=self.config.pin_memory,
             collate_fn=collate_fn,
+            generator=self._rng,
         )
         if self.config.num_workers > 0:
             loader_kwargs["prefetch_factor"] = self.config.prefetch_factor
         return DataLoader(**loader_kwargs)
+
+    def _build_generator(self) -> torch.Generator:
+        """Tạo generator trên CPU để tương thích DataLoader workers."""
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(torch.initial_seed())
+        return generator
