@@ -65,8 +65,9 @@ class Trainer:
         self.model.to(self.device)
 
         self.criterion = nn.CrossEntropyLoss()
-        self.scaler = torch.cuda.amp.GradScaler(
-            enabled=(self.device.type == "cuda" and train_config.mixed_precision)
+        self.scaler = torch.amp.GradScaler(
+            "cuda",
+            enabled=(self.device.type == "cuda" and train_config.mixed_precision),
         )
         self.best_metric_value: Optional[float] = None
         self.best_epoch: Optional[int] = None
@@ -174,7 +175,7 @@ class Trainer:
             batch_size = labels.size(0)
 
             with torch.set_grad_enabled(train):
-                with torch.cuda.amp.autocast(enabled=self.scaler.is_enabled()):
+                with torch.amp.autocast("cuda", enabled=self.scaler.is_enabled()):
                     outputs = self.model(features)
                     logits = outputs["logits"]
                     loss = self.criterion(logits, labels)
