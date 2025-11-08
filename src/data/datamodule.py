@@ -97,7 +97,8 @@ class ASVspoofDataModule:
         return DataLoader(**loader_kwargs)
 
     def _build_generator(self) -> torch.Generator:
-        """Tạo generator trên CPU để tương thích DataLoader workers."""
-        generator = torch.Generator(device="cpu")
+        """Tạo generator trên cùng device với torch default."""
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        generator = torch.Generator(device=device)
         generator.manual_seed(torch.initial_seed())
         return generator
