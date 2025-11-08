@@ -113,6 +113,8 @@ class Trainer:
                 {"epoch": epoch, **train_metrics, **{f"val_{k}": v for k, v in valid_metrics.items()}}
             )
 
+            self._log_epoch_metrics(epoch, train_metrics, valid_metrics)
+
             current_metric = valid_metrics.get(self.train_config.best_metric)
             if current_metric is None:
                 raise KeyError(
@@ -251,4 +253,21 @@ class Trainer:
             optimizer,
             T_max=t_max,
             eta_min=self.scheduler_config.min_lr,
+        )
+
+    def _log_epoch_metrics(
+        self,
+        epoch: int,
+        train_metrics: Dict[str, float],
+        valid_metrics: Dict[str, float],
+    ) -> None:
+        def _format(metrics: Dict[str, float]) -> str:
+            ordered = sorted(metrics.items())
+            return " ".join(f"{name}: {value:.4f}" for name, value in ordered)
+
+        print(
+            f"[Epoch {epoch}] Train metrics -> {_format(train_metrics)}"
+        )
+        print(
+            f"[Epoch {epoch}] Valid metrics -> {_format(valid_metrics)}"
         )
