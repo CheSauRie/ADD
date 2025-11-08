@@ -12,7 +12,7 @@
 #       protocol/ASVspoof2019.LA.cm.eval.trl.txt  (tuỳ chọn)
 
 data:
-  data_root: "D:/Datasets/ASVspoof2019_LA"
+  data_root: "/kaggle/input/asvpoof-2019-dataset/LA/LA"
   sample_rate: 16000
   max_duration: 6.0
   pad_mode: "repeat"
@@ -36,12 +36,14 @@ data:
 
   train:
     partition: "train"
+    protocol_file: "/kaggle/input/asvpoof-2019-dataset/LA/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt"
     batch_size: 16
     shuffle: true
     drop_last: true
 
   valid:
     partition: "dev"
+    protocol_file: "/kaggle/input/asvpoof-2019-dataset/LA/LA/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt"
     batch_size: 16
     shuffle: false
     drop_last: false
@@ -57,7 +59,7 @@ model:
 
 training:
   epochs: 50
-  device: null  # auto chọn cuda nếu khả dụng
+  device: "cuda"
   log_interval: 20
   grad_clip: 5.0
   mixed_precision: true
